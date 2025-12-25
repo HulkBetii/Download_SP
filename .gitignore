@@ -1,0 +1,81 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project specific
+downloads_test/
+*.part
+*.part-*
+*.ytdl
+test_*.py
+TEST_RESULTS.md
+FIXES_APPLIED.md
+SHAREPOINT_404_FIX.md
+
+# Server logs and local tooling (may contain URLs/sensitive data)
+*.log
+.codex/
+
+# Real cookie files (never commit session cookies). Keep only the example.
+*sharepoint.com*.json
+*sharepoint.com*.txt
+*_netscape.txt
+*cookies*.json
+*cookies*.txt
+!examples/cookies_example.json
+
+# Keep cookie example but not actual cookies
+!examples/cookies_example.json
+

@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Video Downloader</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 20px; }
+    input, button { padding: 8px; width: 100%; margin: 8px 0; }
+    .row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    progress { width: 100%; height: 18px; }
+    #log { height: 160px; overflow: auto; background: #111; color: #ddd; padding: 8px; font-family: ui-monospace, SFMono-Regular, monospace; }
+  </style>
+</head>
+<body>
+  <h2>🎥 Video Downloader</h2>
+
+  <label>🔗 URL</label>
+  <input id="url" placeholder="Dán link video…"/>
+
+  <label>📁 Thư mục lưu</label>
+  <div class="row">
+    <input id="outDir" placeholder="C:\Downloads hoặc /Users/me/Downloads"/>
+    <button onclick="pickDir()">Chọn…</button>
+  </div>
+
+  <label>🍪 cookies.txt (tùy chọn)</label>
+  <div class="row">
+    <input id="cookies" placeholder="Đường dẫn tới cookies.txt"/>
+    <button onclick="pickCookies()">Chọn…</button>
+  </div>
+
+  <button onclick="start()">⬇️ Tải video</button>
+
+  <p>Tiến trình:</p>
+  <progress id="pg" max="100" value="0"></progress>
+  <div id="pct">0%</div>
+
+  <h3>Log</h3>
+  <pre id="log"></pre>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

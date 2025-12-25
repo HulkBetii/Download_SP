@@ -1,0 +1,29 @@
+[
+  {
+    "name": "sessionid",
+    "value": "your_session_id_here",
+    "domain": ".youtube.com",
+    "path": "/",
+    "secure": true,
+    "httpOnly": true,
+    "expires": 1735689600
+  },
+  {
+    "name": "LOGIN_INFO",
+    "value": "your_login_info_here",
+    "domain": ".youtube.com",
+    "path": "/",
+    "secure": true,
+    "httpOnly": false,
+    "expires": 1735689600
+  },
+  {
+    "name": "SID",
+    "value": "your_sid_here",
+    "domain": ".google.com",
+    "path": "/",
+    "secure": true,
+    "httpOnly": true,
+    "expires": 1735689600
+  }
+]
