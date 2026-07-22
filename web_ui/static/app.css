@@ -32,6 +32,14 @@
   box-sizing: border-box;
 }
 
+/* The browser hides [hidden] with `display: none`, but that comes from the UA
+   stylesheet and any class rule setting `display` outranks it. Components here
+   that lay themselves out with flex or grid were therefore still rendering
+   while marked hidden. Restate it so the attribute always wins. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   min-height: 100%;

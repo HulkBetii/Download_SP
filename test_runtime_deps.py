@@ -134,36 +134,118 @@ class ExtractionTests(unittest.TestCase):
                 runtime_deps._extract_member(archive, spec, root / "bin")
 
 
-class FreshnessTests(unittest.TestCase):
-    def test_recent_version_is_not_stale(self):
-        from datetime import date, timedelta
+class VersionParsingTests(unittest.TestCase):
+    """The same release is spelled differently depending on the source."""
 
-        recent = date.today() - timedelta(days=2)
-        stamp = f"{recent.year}.{recent.month:02d}.{recent.day:02d}"
-        with patch.object(runtime_deps, "_yt_dlp_freshness", wraps=runtime_deps._yt_dlp_freshness):
-            version, stale = self._freshness_for(stamp)
-        self.assertEqual(version, stamp)
-        self.assertFalse(stale)
+    def test_zero_padding_does_not_change_the_version(self):
+        # yt-dlp reports 2026.07.04; PyPI lists 2026.7.4. Comparing the strings
+        # would report a phantom difference.
+        self.assertEqual(
+            runtime_deps._parse_version("2026.07.04"),
+            runtime_deps._parse_version("2026.7.4"),
+        )
 
-    def test_old_version_is_stale(self):
-        from datetime import date, timedelta
+    def test_ordering(self):
+        newer = runtime_deps._parse_version("2026.8.1")
+        older = runtime_deps._parse_version("2026.07.04")
+        self.assertGreater(newer, older)
 
-        old = date.today() - timedelta(days=runtime_deps.YT_DLP_MAX_AGE_DAYS + 10)
-        stamp = f"{old.year}.{old.month:02d}.{old.day:02d}"
-        _version, stale = self._freshness_for(stamp)
-        self.assertTrue(stale)
+    def test_unparseable_version_is_handled(self):
+        self.assertEqual(runtime_deps._parse_version("nightly"), ())
+        self.assertEqual(runtime_deps._parse_version(""), ())
 
-    def test_unparseable_version_is_not_reported_stale(self):
-        """A surprising version string must not trigger an endless upgrade loop."""
-        _version, stale = self._freshness_for("nightly")
-        self.assertFalse(stale)
 
-    def _freshness_for(self, version: str) -> tuple[str, bool]:
-        import types
+class UpdateAvailabilityTests(unittest.TestCase):
+    """Age is not the same question as 'is there a newer release'.
 
-        fake_module = types.SimpleNamespace(__version__=version)
-        with patch.dict("sys.modules", {"yt_dlp.version": fake_module}):
-            return runtime_deps._yt_dlp_freshness()
+    The previous rule flagged anything older than a fortnight as stale. yt-dlp
+    had simply not published for 18 days, so the UI nagged about an update that
+    did not exist and the button reported success while changing nothing.
+    """
+
+    def setUp(self):
+        runtime_deps._yt_dlp_update_available.cache_clear()
+        self.addCleanup(runtime_deps._yt_dlp_update_available.cache_clear)
+
+    def _availability(self, installed: str, pypi: str | None) -> bool:
+        with patch.object(runtime_deps, "_installed_yt_dlp_version", return_value=installed), \
+             patch.object(runtime_deps, "_latest_pypi_version", return_value=pypi):
+            return runtime_deps._yt_dlp_update_available()
+
+    def test_current_release_reports_no_update(self):
+        self.assertFalse(self._availability("2026.07.04", "2026.7.4"))
+
+    def test_newer_release_reports_an_update(self):
+        self.assertTrue(self._availability("2026.07.04", "2026.8.1"))
+
+    def test_unreachable_pypi_stays_quiet(self):
+        """Nagging about something unverifiable is worse than saying nothing."""
+        self.assertFalse(self._availability("2026.07.04", None))
+
+    def test_unknown_installed_version_stays_quiet(self):
+        self.assertFalse(self._availability("unknown", "2026.8.1"))
+
+
+class UpgradeOutcomeTests(unittest.TestCase):
+    def setUp(self):
+        runtime_deps._yt_dlp_update_available.cache_clear()
+        self.addCleanup(runtime_deps._yt_dlp_update_available.cache_clear)
+
+    def test_no_upgrade_attempted_when_already_current(self):
+        with patch.object(runtime_deps, "_yt_dlp_freshness", return_value=("2026.7.4", False)), \
+             patch.object(runtime_deps, "_run_pip") as fake_pip:
+            self.assertFalse(runtime_deps.ensure_ytdlp_fresh())
+        fake_pip.assert_not_called()
+
+    def test_unchanged_version_is_not_reported_as_success(self):
+        """pip exits 0 when already current, so the exit code cannot be trusted."""
+        messages: list[tuple[str, str]] = []
+        with patch.object(runtime_deps, "_yt_dlp_freshness", return_value=("2026.7.4", True)), \
+             patch.object(runtime_deps, "_run_pip", return_value=True), \
+             patch.object(runtime_deps, "_installed_yt_dlp_version", return_value="2026.7.4"):
+            result = runtime_deps.ensure_ytdlp_fresh(lambda m, l="info": messages.append((l, m)))
+
+        self.assertFalse(result, "an unchanged version is not an upgrade")
+        self.assertTrue(any(level == "warning" for level, _ in messages))
+
+    def test_real_upgrade_is_reported(self):
+        messages: list[tuple[str, str]] = []
+        with patch.object(runtime_deps, "_yt_dlp_freshness", return_value=("2026.7.4", True)), \
+             patch.object(runtime_deps, "_run_pip", return_value=True), \
+             patch.object(runtime_deps, "_installed_yt_dlp_version", return_value="2026.8.1"):
+            result = runtime_deps.ensure_ytdlp_fresh(lambda m, l="info": messages.append((l, m)))
+
+        self.assertTrue(result)
+        self.assertTrue(any(level == "success" for level, _ in messages))
+
+    def test_failed_pip_is_not_reported_as_success(self):
+        with patch.object(runtime_deps, "_yt_dlp_freshness", return_value=("2026.7.4", True)), \
+             patch.object(runtime_deps, "_run_pip", return_value=False):
+            self.assertFalse(runtime_deps.ensure_ytdlp_fresh())
+
+
+class PluginPackageTests(unittest.TestCase):
+    def test_every_declared_plugin_resolves_on_pypi(self):
+        """A fabricated distribution name errors on every setup run.
+
+        This list previously held "yt-dlp-ChromeCookieUnlock", which PyPI answers
+        with a 404.
+        """
+        import json as json_module
+        import urllib.error
+        import urllib.request
+
+        for _import_name, distribution in runtime_deps.PLUGIN_PACKAGES:
+            with self.subTest(distribution=distribution):
+                try:
+                    with urllib.request.urlopen(
+                        f"https://pypi.org/pypi/{distribution}/json", timeout=10
+                    ) as response:
+                        json_module.load(response)
+                except urllib.error.HTTPError as exc:
+                    self.fail(f"{distribution} is not on PyPI (HTTP {exc.code})")
+                except Exception:
+                    self.skipTest("PyPI unreachable")
 
 
 class FrozenBuildTests(unittest.TestCase):

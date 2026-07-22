@@ -14,6 +14,7 @@ are involved:
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
@@ -24,7 +25,6 @@ import tempfile
 import urllib.request
 import zipfile
 from dataclasses import dataclass, field
-from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -32,7 +32,8 @@ ProgressCallback = Callable[[str, str], None]
 
 PIP_TIMEOUT_SECONDS = 300
 DOWNLOAD_TIMEOUT_SECONDS = 120
-YT_DLP_MAX_AGE_DAYS = 14
+# How long a PyPI lookup may take before we give up and stay quiet.
+PYPI_QUERY_TIMEOUT_SECONDS = 8
 
 # Packages the tool cannot do its job without. ``import_name`` differs from the
 # distribution name often enough that both have to be recorded.
@@ -44,9 +45,12 @@ CORE_PACKAGES: tuple[tuple[str, str], ...] = (
 
 # yt-dlp plugins install into the ``yt_dlp_plugins`` namespace, so the import
 # name is a submodule path and never matches the distribution name.
-PLUGIN_PACKAGES: tuple[tuple[str, str], ...] = (
-    ("yt_dlp_plugins.extractor.ChromeCookieUnlock", "yt-dlp-ChromeCookieUnlock"),
-)
+#
+# Empty on purpose. This previously listed "yt-dlp-ChromeCookieUnlock", which
+# does not exist on PyPI (404), so every setup run ended with a spurious install
+# error in the log. Add an entry only after confirming the distribution name
+# actually resolves.
+PLUGIN_PACKAGES: tuple[tuple[str, str], ...] = ()
 
 # Installed on demand only. Measured behaviour: YouTube extracts fine without a
 # PO token provider, and installing this one *without* also running its Node
@@ -221,23 +225,69 @@ def detect() -> DependencyReport:
     return report
 
 
-def _yt_dlp_freshness() -> tuple[str, bool]:
-    """yt-dlp versions are date-stamped (``2026.07.04``), so age is readable."""
+def _parse_version(value: str) -> tuple[int, ...]:
+    """Split a version into comparable integers.
+
+    Needed because the same release is spelled differently depending on where it
+    is read: yt-dlp reports ``2026.07.04`` while PyPI lists ``2026.7.4``.
+    """
+    parts: list[int] = []
+    for chunk in str(value or "").split("."):
+        digits = "".join(ch for ch in chunk if ch.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
+def _latest_pypi_version(package: str, timeout: int = 8) -> str | None:
+    """Ask PyPI what the newest release is. None when it cannot be reached."""
+    request = urllib.request.Request(
+        f"https://pypi.org/pypi/{package}/json",
+        headers={"User-Agent": "VideoDownloaderTool"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.load(response)
+        version = str(payload.get("info", {}).get("version") or "").strip()
+        return version or None
+    except Exception:
+        return None
+
+
+@functools.lru_cache(maxsize=1)
+def _yt_dlp_update_available() -> bool:
+    """Whether PyPI actually has a newer yt-dlp than the installed one.
+
+    Age was the previous test: anything older than a fortnight counted as stale.
+    That is not the same question. yt-dlp had simply not released for 18 days, so
+    the UI nagged about an update that did not exist and the button reported
+    success without changing anything - the installed build already *was* the
+    newest. Asking PyPI answers the real question.
+
+    Cached because it runs on every state read, and treated as "no update" when
+    PyPI is unreachable: nagging about something unverifiable is worse than
+    staying quiet.
+    """
+    installed = _installed_yt_dlp_version()
+    if installed == "unknown":
+        return False
+    latest = _latest_pypi_version("yt-dlp")
+    if not latest:
+        return False
+    return _parse_version(latest) > _parse_version(installed)
+
+
+def _installed_yt_dlp_version() -> str:
     try:
         from yt_dlp.version import __version__ as version
     except Exception:
-        return "unknown", False
+        return "unknown"
+    return str(version)
 
-    parts = str(version).split(".")
-    if len(parts) < 3:
-        return version, False
-    try:
-        released = date(int(parts[0]), int(parts[1]), int(parts[2]))
-    except (TypeError, ValueError):
-        return version, False
 
-    age_days = (datetime.now().date() - released).days
-    return version, age_days > YT_DLP_MAX_AGE_DAYS
+def _yt_dlp_freshness() -> tuple[str, bool]:
+    return _installed_yt_dlp_version(), _yt_dlp_update_available()
 
 
 # --------------------------------------------------------------------------
@@ -290,14 +340,27 @@ def ensure_python_packages(
 
 
 def ensure_ytdlp_fresh(progress: ProgressCallback | None = None) -> bool:
-    """Upgrade yt-dlp when the bundled build is older than the age threshold."""
-    version, stale = _yt_dlp_freshness()
-    if not stale:
+    """Upgrade yt-dlp when PyPI has a newer release. True only if it changed.
+
+    Success is judged by the version actually moving, not by pip's exit code.
+    ``pip install -U`` exits 0 when the package is already current, so trusting
+    the return code reported a successful update while nothing had changed.
+    """
+    version, update_available = _yt_dlp_freshness()
+    if not update_available:
         return False
+
     _emit(progress, f"yt-dlp {version} da cu, dang cap nhat...", "info")
     if not _run_pip(["--upgrade", "yt-dlp"], progress):
         return False
-    _emit(progress, "Da cap nhat yt-dlp.", "success")
+
+    _yt_dlp_update_available.cache_clear()
+    new_version = _installed_yt_dlp_version()
+    if _parse_version(new_version) <= _parse_version(version):
+        _emit(progress, f"yt-dlp van o ban {new_version}; khong co ban moi hon de cai.", "warning")
+        return False
+
+    _emit(progress, f"Da cap nhat yt-dlp: {version} -> {new_version}.", "success")
     return True
 
 

@@ -380,6 +380,9 @@ function renderDependencies(dependencies) {
   if (!els.setupStrip) {
     return;
   }
+  // "Thiếu" và "có nhưng cũ" là hai chuyện khác nhau. Gộp chung khiến một
+  // yt-dlp đang chạy tốt bị báo là thiếu, mâu thuẫn ngay với chip capability
+  // bên cạnh đang hiện đúng số phiên bản của nó.
   const missing = [];
   Object.entries(dependencies.pythonPackages || {}).forEach(([name, present]) => {
     if (!present) {
@@ -389,11 +392,17 @@ function renderDependencies(dependencies) {
   if (dependencies.ffmpeg === false) {
     missing.push("ffmpeg");
   }
+
+  const parts = [];
+  if (missing.length) {
+    parts.push(`Thiếu: ${missing.join(", ")}`);
+  }
   if (dependencies.ytDlpStale) {
-    missing.push("yt-dlp (bản cũ)");
+    const version = dependencies.ytDlpVersion ? ` (${dependencies.ytDlpVersion})` : "";
+    parts.push(`Có bản yt-dlp mới hơn${version}`);
   }
 
-  if (!missing.length) {
+  if (!parts.length) {
     els.setupStrip.hidden = true;
     return;
   }
@@ -401,8 +410,9 @@ function renderDependencies(dependencies) {
   els.setupStrip.hidden = false;
   const frozen = Boolean(dependencies.frozen);
   els.setupMessage.textContent = frozen
-    ? `Thiếu: ${missing.join(", ")}. Bản đóng gói không tự cài được.`
-    : `Thiếu: ${missing.join(", ")}.`;
+    ? `${parts.join(" · ")}. Bản đóng gói không tự cài được.`
+    : `${parts.join(" · ")}.`;
+  els.runSetup.textContent = missing.length ? "Cài đặt" : "Cập nhật";
   els.runSetup.hidden = frozen;
 }
 
