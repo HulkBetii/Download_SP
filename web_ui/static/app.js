@@ -364,9 +364,13 @@ function syncInputsFromState(state) {
 }
 
 function renderSummary(state) {
+  // Ba chỗ này từng nhận cùng một chuỗi, nên cùng câu tóm tắt hiện ba lần trên
+  // màn hình. Mỗi chỗ giờ nói một việc khác nhau.
   els.headerSummary.textContent = state.summary || "Sẵn sàng.";
-  els.headerPill.textContent = state.summary || "0 / 0";
-  els.queueSummary.textContent = state.summary || "Chưa có URL";
+  els.headerPill.textContent = state.progress?.detail || "0 / 0";
+
+  const total = (state.items || []).length;
+  els.queueSummary.textContent = total ? `${total} mục` : "Trống";
   els.selectionCount.textContent = `${selectedIds.size} mục được chọn`;
 }
 
@@ -406,9 +410,10 @@ function renderNowCard(state) {
   if (!els.nowCard) {
     return;
   }
+  // Chỉ hiện khi thực sự có việc đang chạy. Điều kiện cũ còn tính cả lô đã
+  // xong, nên một thẻ "Sẵn sàng · 0/0" nằm lại trên màn hình không làm gì.
   const running = Boolean(state.running);
-  const hasHistory = Boolean(state.batch?.total);
-  els.nowCard.hidden = !running && !hasHistory;
+  els.nowCard.hidden = !running;
 
   const autoJob = state.autoJob || {};
   const active = (state.items || []).find((item) => item.status === "Đang tải" || item.status === "Đang xử lý");

@@ -17,235 +17,243 @@
       <div class="topbar-pill" id="header-pill">0 / 0</div>
     </header>
 
-    <main class="workspace workspace-simple">
-      <!-- Mọi thứ người dùng cần cho trường hợp thường: một ô URL và một nút. -->
-      <section class="hero" id="hero" aria-label="Tải video">
-        <label class="hero-field">
-          <span class="hero-label">Dán link video</span>
-          <textarea id="single-url" rows="2" autocomplete="off"
-                    placeholder="Dán link vào đây, hoặc kéo thả link vào ô này"></textarea>
-        </label>
+    <main class="workspace">
+      <!-- KHỐI TRÁI: nhập link và bấm tải. Đây là toàn bộ thứ cần cho việc thường. -->
+      <section class="panel panel-stack" aria-label="Tải video">
+        <section class="section" id="hero">
+          <label class="hero-field">
+            <span class="hero-label">Dán link video</span>
+            <textarea id="single-url" rows="3" autocomplete="off"
+                      placeholder="Dán link vào đây, hoặc kéo thả link vào ô này"></textarea>
+          </label>
 
-        <button id="auto-download" class="btn btn-primary btn-block btn-hero" type="button">
-          Tải xuống
-        </button>
+          <button id="auto-download" class="btn btn-primary btn-block btn-hero" type="button">
+            Tải xuống
+          </button>
 
-        <div class="hero-hint" id="hero-hint">
-          Nhiều link thì mỗi dòng một link. Tool tự chọn cách tải phù hợp.
-        </div>
+          <div class="hero-hint" id="hero-hint">
+            Nhiều link thì mỗi dòng một link. Tool tự chọn cách tải phù hợp.
+          </div>
 
-        <!-- Chỉ hiện khi thiếu thành phần; tự ẩn khi đủ. -->
-        <div class="setup-strip" id="setup-strip" hidden>
-          <span class="setup-message" id="setup-message"></span>
-          <button id="run-setup" class="btn btn-secondary btn-small" type="button">Cài đặt</button>
-        </div>
+          <!-- Chỉ hiện khi thiếu thành phần; tự ẩn khi đủ. -->
+          <div class="setup-strip" id="setup-strip" hidden>
+            <span class="setup-message" id="setup-message"></span>
+            <button id="run-setup" class="btn btn-secondary btn-small" type="button">Cài đặt</button>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-head"><h2>Thư mục lưu</h2></div>
+          <label class="field">
+            <span>Đường dẫn</span>
+            <div class="path-row">
+              <input id="output-folder" type="text" autocomplete="off" placeholder="C:\Downloads">
+              <button id="choose-output-folder" class="btn btn-ghost" type="button">Chọn...</button>
+            </div>
+          </label>
+        </section>
+
+        <section class="section">
+          <div class="section-head"><h2>Chế độ tải</h2></div>
+          <div class="segmented" role="radiogroup" aria-label="Chế độ tải">
+            <label class="segment"><input type="radio" name="optimize-mode" value="balanced"><span>Cân bằng</span></label>
+            <label class="segment"><input type="radio" name="optimize-mode" value="speed"><span>Tốc độ cao</span></label>
+            <label class="segment"><input type="radio" name="optimize-mode" value="quality" checked><span>Chất lượng cao</span></label>
+          </div>
+        </section>
       </section>
 
-      <!-- Tiến trình của tác vụ đang chạy. -->
-      <section class="now-card" id="now-card" hidden aria-live="polite">
-        <div class="now-head">
-          <span class="now-title" id="now-title">Đang chuẩn bị…</span>
-          <span id="auto-stage" class="meta-chip stage-chip">Auto: sẵn sàng</span>
-        </div>
-        <progress id="progress" max="100" value="0"></progress>
-        <div class="now-meta">
-          <span id="footer-status" class="footer-status">Sẵn sàng.</span>
-          <span id="batch-detail" class="footer-detail">0 / 0</span>
-        </div>
-      </section>
-
-      <details class="section compact-details" id="queue-details">
-        <summary>
-          <span>Hàng đợi</span>
-          <span id="queue-summary" class="meta-chip">Chưa có URL</span>
-        </summary>
-        <div class="compact-details-body">
-          <div class="meta-row">
-            <span id="selection-count" class="meta-copy">0 mục được chọn</span>
+      <!-- KHỐI PHẢI: mọi thứ thuộc về trạng thái. -->
+      <section class="panel panel-stack" aria-label="Trạng thái">
+        <!-- Ẩn hoàn toàn khi không có gì chạy. -->
+        <div class="now-card" id="now-card" hidden aria-live="polite">
+          <div class="now-head">
+            <span class="now-title" id="now-title">Đang chuẩn bị…</span>
+            <span id="auto-stage" class="meta-chip stage-chip">Auto: sẵn sàng</span>
           </div>
-          <div class="table-wrap">
-            <table class="queue-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>URL</th>
-                  <th>Host</th>
-                  <th>Trạng thái</th>
-                  <th>Tiến độ</th>
-                  <th>Cập nhật</th>
-                </tr>
-              </thead>
-              <tbody id="queue-body"></tbody>
-            </table>
-          </div>
-          <div class="split-actions">
-            <button id="remove-selected" class="btn btn-ghost" type="button">Xóa đã chọn</button>
-            <button id="clear-all" class="btn btn-danger" type="button">Xóa tất cả</button>
+          <progress id="progress" max="100" value="0"></progress>
+          <div class="now-meta">
+            <span id="footer-status" class="footer-status">Sẵn sàng.</span>
+            <span id="batch-detail" class="footer-detail">0 / 0</span>
           </div>
         </div>
-      </details>
 
-      <details class="section compact-details" id="advanced-details">
-        <summary>
-          <span>Nâng cao / Chẩn đoán</span>
-          <span id="capability-pill" class="meta-chip">Đang kiểm tra...</span>
-        </summary>
-
-        <div class="compact-details-body">
-          <section class="section">
-            <div class="section-head"><h2>Thư mục lưu</h2></div>
-            <label class="field">
-              <span>Đường dẫn</span>
-              <div class="path-row">
-                <input id="output-folder" type="text" autocomplete="off" placeholder="C:\Downloads">
-                <button id="choose-output-folder" class="btn btn-ghost" type="button">Chọn...</button>
-              </div>
-            </label>
-          </section>
-
-          <section class="section">
-            <div class="section-head"><h2>Chế độ &amp; cookie</h2></div>
-            <div class="segmented" role="radiogroup" aria-label="Chế độ tải">
-              <label class="segment"><input type="radio" name="optimize-mode" value="balanced"><span>Cân bằng</span></label>
-              <label class="segment"><input type="radio" name="optimize-mode" value="speed"><span>Tốc độ cao</span></label>
-              <label class="segment"><input type="radio" name="optimize-mode" value="quality" checked><span>Chất lượng cao</span></label>
+        <details class="section compact-details" id="queue-details">
+          <summary>
+            <span>Hàng đợi</span>
+            <span id="queue-summary" class="meta-chip">Trống</span>
+          </summary>
+          <div class="compact-details-body">
+            <div class="meta-row">
+              <span id="selection-count" class="meta-copy">0 mục được chọn</span>
             </div>
-
-            <label class="check-line">
-              <input id="use-cookies" type="checkbox">
-              <span>Dùng cookie file (.txt/.json)</span>
-            </label>
-            <label class="field">
-              <span>Cookie file</span>
-              <div class="path-row">
-                <input id="cookie-file" type="text" autocomplete="off" placeholder="Đường dẫn tới cookie file">
-                <button id="choose-cookie-file" class="btn btn-ghost" type="button">Chọn...</button>
-              </div>
-            </label>
-          </section>
-
-          <section class="section">
-            <div class="section-head"><h2>Công cụ thủ công</h2></div>
-            <div class="button-row compact-actions">
-              <button id="add-url" class="btn btn-ghost" type="button">Thêm vào hàng đợi</button>
-              <button id="paste-clipboard" class="btn btn-ghost" type="button">Dán clipboard</button>
-              <button id="start-download" class="btn btn-ghost" type="button">Chạy hàng đợi</button>
-            </div>
-            <div class="button-row compact-actions">
-              <button id="analyze-url" class="btn btn-ghost" type="button">Phân tích URL</button>
-              <button id="inspect-media" class="btn btn-ghost" type="button">Inspect media</button>
-              <button id="sniff-media" class="btn btn-ghost" type="button">Bắt media</button>
-            </div>
-            <label class="field">
-              <span>Danh sách nhiều URL</span>
-              <textarea id="bulk-urls" rows="3" placeholder="Mỗi dòng một URL"></textarea>
-            </label>
-            <button id="add-bulk" class="btn btn-ghost" type="button">Thêm danh sách</button>
-          </section>
-
-          <section class="section">
-            <div class="section-head"><h2>Tùy chọn yt-dlp</h2></div>
-            <div class="advanced-grid">
-              <label class="check-line advanced-span-2">
-                <input id="use-browser-cookies" type="checkbox">
-                <span>Dùng cookies từ trình duyệt</span>
-              </label>
-              <div id="browser-cookie-note" class="inline-note advanced-span-2" hidden></div>
-
-              <label class="field">
-                <span>Trình duyệt</span>
-                <select id="browser-name">
-                  <option value="coccoc">Cốc Cốc</option>
-                  <option value="chrome">Chrome</option>
-                  <option value="edge">Edge</option>
-                  <option value="firefox">Firefox</option>
-                  <option value="brave">Brave</option>
-                  <option value="chromium">Chromium</option>
-                  <option value="opera">Opera</option>
-                  <option value="vivaldi">Vivaldi</option>
-                  <option value="safari">Safari</option>
-                </select>
-              </label>
-
-              <label class="field">
-                <span>Profile / đường dẫn</span>
-                <input id="browser-profile" type="text" autocomplete="off" placeholder="Profile mặc định">
-              </label>
-
-              <label class="field">
-                <span>Firefox container</span>
-                <input id="browser-container" type="text" autocomplete="off" placeholder="none">
-              </label>
-
-              <label class="field">
-                <span>Proxy</span>
-                <input id="proxy" type="text" autocomplete="off" placeholder="http://127.0.0.1:8888">
-              </label>
-
-              <label class="field">
-                <span>Impersonation</span>
-                <input id="impersonate" type="text" autocomplete="off" placeholder="chrome (mặc định)">
-              </label>
-
-              <label class="field">
-                <span>Download archive</span>
-                <input id="download-archive" type="text" autocomplete="off" placeholder="archive.txt">
-              </label>
-
-              <label class="field">
-                <span>Sort format</span>
-                <input id="format-sort" type="text" autocomplete="off" placeholder="res,quality,br">
-              </label>
-
-              <label class="field">
-                <span>Số fragment đồng thời</span>
-                <input id="concurrent-fragments" type="number" min="1" max="32" step="1" inputmode="numeric">
-              </label>
-
-              <label class="check-line">
-                <input id="check-formats" type="checkbox">
-                <span>Kiểm tra format trước khi tải</span>
-              </label>
-
-              <label class="check-line">
-                <input id="skip-unavailable-fragments" type="checkbox">
-                <span>Bỏ qua fragment thiếu</span>
-              </label>
-            </div>
-          </section>
-
-          <section class="section inspector-section">
-            <div class="section-head"><h2>Media Inspector</h2></div>
-            <div id="diagnostics" class="diagnostics" aria-live="polite"></div>
-            <div id="candidate-empty" class="empty-note">Chưa có candidate.</div>
-            <div class="table-wrap inspector-wrap">
-              <table class="candidate-table">
+            <div class="table-wrap">
+              <table class="queue-table">
                 <thead>
                   <tr>
-                    <th>Score</th>
-                    <th>Loại</th>
+                    <th>#</th>
+                    <th>URL</th>
                     <th>Host</th>
-                    <th>Status</th>
-                    <th>MIME</th>
-                    <th>Kích thước</th>
-                    <th>Lý do</th>
-                    <th></th>
+                    <th>Trạng thái</th>
+                    <th>Tiến độ</th>
+                    <th>Cập nhật</th>
                   </tr>
                 </thead>
-                <tbody id="candidate-body"></tbody>
+                <tbody id="queue-body"></tbody>
               </table>
             </div>
-          </section>
-
-          <section class="section log-section">
-            <div class="section-head">
-              <h2>Hoạt động</h2>
-              <button id="clear-log" class="btn btn-ghost btn-small" type="button">Xóa log</button>
+            <div class="split-actions">
+              <button id="remove-selected" class="btn btn-ghost" type="button">Xóa đã chọn</button>
+              <button id="clear-all" class="btn btn-danger" type="button">Xóa tất cả</button>
             </div>
-            <div id="log" class="log" aria-live="polite"></div>
-          </section>
-        </div>
-      </details>
+          </div>
+        </details>
+
+        <details class="section compact-details" id="advanced-details">
+          <summary>
+            <span>Nâng cao / Chẩn đoán</span>
+            <span id="capability-pill" class="meta-chip">Đang kiểm tra...</span>
+          </summary>
+
+          <div class="compact-details-body">
+            <section class="section">
+              <div class="section-head"><h2>Cookie</h2></div>
+              <label class="check-line">
+                <input id="use-cookies" type="checkbox">
+                <span>Dùng cookie file (.txt/.json)</span>
+              </label>
+              <label class="field">
+                <span>Cookie file</span>
+                <div class="path-row">
+                  <input id="cookie-file" type="text" autocomplete="off" placeholder="Đường dẫn tới cookie file">
+                  <button id="choose-cookie-file" class="btn btn-ghost" type="button">Chọn...</button>
+                </div>
+              </label>
+            </section>
+
+            <section class="section">
+              <div class="section-head"><h2>Công cụ thủ công</h2></div>
+              <div class="button-row compact-actions">
+                <button id="add-url" class="btn btn-ghost" type="button">Thêm vào hàng đợi</button>
+                <button id="paste-clipboard" class="btn btn-ghost" type="button">Dán clipboard</button>
+                <button id="start-download" class="btn btn-ghost" type="button">Chạy hàng đợi</button>
+              </div>
+              <div class="button-row compact-actions">
+                <button id="analyze-url" class="btn btn-ghost" type="button">Phân tích URL</button>
+                <button id="inspect-media" class="btn btn-ghost" type="button">Inspect media</button>
+                <button id="sniff-media" class="btn btn-ghost" type="button">Bắt media</button>
+              </div>
+              <label class="field">
+                <span>Danh sách nhiều URL</span>
+                <textarea id="bulk-urls" rows="3" placeholder="Mỗi dòng một URL"></textarea>
+              </label>
+              <button id="add-bulk" class="btn btn-ghost" type="button">Thêm danh sách</button>
+            </section>
+
+            <section class="section">
+              <div class="section-head"><h2>Tùy chọn yt-dlp</h2></div>
+              <div class="advanced-grid">
+                <label class="check-line advanced-span-2">
+                  <input id="use-browser-cookies" type="checkbox">
+                  <span>Dùng cookies từ trình duyệt</span>
+                </label>
+                <div id="browser-cookie-note" class="inline-note advanced-span-2" hidden></div>
+
+                <label class="field">
+                  <span>Trình duyệt</span>
+                  <select id="browser-name">
+                    <option value="coccoc">Cốc Cốc</option>
+                    <option value="chrome">Chrome</option>
+                    <option value="edge">Edge</option>
+                    <option value="firefox">Firefox</option>
+                    <option value="brave">Brave</option>
+                    <option value="chromium">Chromium</option>
+                    <option value="opera">Opera</option>
+                    <option value="vivaldi">Vivaldi</option>
+                    <option value="safari">Safari</option>
+                  </select>
+                </label>
+
+                <label class="field">
+                  <span>Profile / đường dẫn</span>
+                  <input id="browser-profile" type="text" autocomplete="off" placeholder="Profile mặc định">
+                </label>
+
+                <label class="field">
+                  <span>Firefox container</span>
+                  <input id="browser-container" type="text" autocomplete="off" placeholder="none">
+                </label>
+
+                <label class="field">
+                  <span>Proxy</span>
+                  <input id="proxy" type="text" autocomplete="off" placeholder="http://127.0.0.1:8888">
+                </label>
+
+                <label class="field">
+                  <span>Impersonation</span>
+                  <input id="impersonate" type="text" autocomplete="off" placeholder="chrome (mặc định)">
+                </label>
+
+                <label class="field">
+                  <span>Download archive</span>
+                  <input id="download-archive" type="text" autocomplete="off" placeholder="archive.txt">
+                </label>
+
+                <label class="field">
+                  <span>Sort format</span>
+                  <input id="format-sort" type="text" autocomplete="off" placeholder="res,quality,br">
+                </label>
+
+                <label class="field">
+                  <span>Số fragment đồng thời</span>
+                  <input id="concurrent-fragments" type="number" min="1" max="32" step="1" inputmode="numeric">
+                </label>
+
+                <label class="check-line">
+                  <input id="check-formats" type="checkbox">
+                  <span>Kiểm tra format trước khi tải</span>
+                </label>
+
+                <label class="check-line">
+                  <input id="skip-unavailable-fragments" type="checkbox">
+                  <span>Bỏ qua fragment thiếu</span>
+                </label>
+              </div>
+            </section>
+
+            <section class="section inspector-section">
+              <div class="section-head"><h2>Media Inspector</h2></div>
+              <div id="diagnostics" class="diagnostics" aria-live="polite"></div>
+              <div id="candidate-empty" class="empty-note">Chưa có candidate.</div>
+              <div class="table-wrap inspector-wrap">
+                <table class="candidate-table">
+                  <thead>
+                    <tr>
+                      <th>Score</th>
+                      <th>Loại</th>
+                      <th>Host</th>
+                      <th>Status</th>
+                      <th>MIME</th>
+                      <th>Kích thước</th>
+                      <th>Lý do</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="candidate-body"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="section log-section">
+              <div class="section-head">
+                <h2>Hoạt động</h2>
+                <button id="clear-log" class="btn btn-ghost btn-small" type="button">Xóa log</button>
+              </div>
+              <div id="log" class="log" aria-live="polite"></div>
+            </section>
+          </div>
+        </details>
+      </section>
     </main>
   </div>
 

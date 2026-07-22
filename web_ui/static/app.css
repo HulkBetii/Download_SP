@@ -3,6 +3,9 @@
   --bg: #f6f8fb;
   --panel: #ffffff;
   --panel-alt: #eef2f7;
+  /* Nền cho ô nhập. Biến này từng bị dùng mà chưa khai báo, nên các fallback
+     tối trong CSS thắng và ô nhập thành đen trên nền sáng. */
+  --input-bg: #ffffff;
   --border: #cbd5e1;
   --text: #0f172a;
   --muted: #64748b;
@@ -723,53 +726,65 @@ progress {
   }
 }
 
-/* ---- Hero: khối mặc định người dùng thấy (một ô URL + một nút) ---- */
-.workspace-simple {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  max-width: 760px;
-  margin: 0 auto;
-  width: 100%;
-}
-
+/* ---- Hero: khối nhập liệu chính, nằm trong cột trái ---- */
+/* Không đặt display/width riêng cho khối cha: .workspace (grid 2 cột) đã lo
+   phần đó. Bản trước thêm .workspace-simple với display:flex nhưng
+   .workspace có align-items:start vẫn thắng, nên các thẻ con không giãn và
+   mỗi thẻ rộng một kiểu. */
 .hero {
-  border: 1px solid var(--border, #2a3350);
-  border-radius: 14px;
-  padding: 20px;
-  background: var(--panel, #151c2f);
   display: flex;
   flex-direction: column;
   gap: 12px;
+  width: 100%;
   transition: border-color 120ms ease, background 120ms ease;
 }
 
 /* Phản hồi khi kéo link vào ô */
 .hero-dragging {
-  border-color: var(--accent, #4c8dff);
-  background: rgba(76, 141, 255, 0.08);
+  border-color: var(--primary);
+  background: rgba(37, 99, 235, 0.06);
 }
 
-.hero-field { display: flex; flex-direction: column; gap: 6px; }
+.hero-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 
-.hero-label { font-size: 13px; opacity: 0.75; }
+.hero-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
 
 .hero-field textarea {
   width: 100%;
   resize: vertical;
-  min-height: 52px;
+  min-height: 64px;
   font: inherit;
   padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--border, #2a3350);
-  background: var(--input-bg, #0f1522);
-  color: inherit;
-  box-sizing: border-box;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text);
 }
 
-.btn-hero { padding: 12px; font-size: 15px; font-weight: 600; }
+.hero-field textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: var(--focus);
+}
 
-.hero-hint { font-size: 12px; opacity: 0.6; }
+.btn-hero {
+  padding: 12px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.hero-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
 
 /* Dải cài đặt: chỉ hiện khi thiếu thành phần, đủ rồi thì tự ẩn */
 .setup-strip {
@@ -777,42 +792,84 @@ progress {
   align-items: center;
   gap: 10px;
   padding: 9px 12px;
-  border-radius: 10px;
-  background: rgba(255, 176, 32, 0.12);
-  border: 1px solid rgba(255, 176, 32, 0.35);
+  border-radius: var(--radius);
+  background: rgba(217, 119, 6, 0.08);
+  border: 1px solid rgba(217, 119, 6, 0.3);
   font-size: 13px;
+  color: var(--text);
 }
 
-.setup-message { flex: 1; }
+.setup-message {
+  flex: 1;
+  min-width: 0;
+}
 
-/* ---- Thẻ tiến trình ---- */
+/* ---- Thẻ tiến trình, đầu cột phải ---- */
 .now-card {
-  border: 1px solid var(--border, #2a3350);
-  border-radius: 14px;
-  padding: 16px 20px;
-  background: var(--panel, #151c2f);
   display: flex;
   flex-direction: column;
   gap: 10px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-alt);
 }
 
-.now-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.now-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
 
-.now-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-.now-card progress { width: 100%; height: 8px; }
+.now-card progress {
+  width: 100%;
+  height: 8px;
+}
 
 .now-meta {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   font-size: 12px;
-  opacity: 0.75;
+  color: var(--muted);
 }
 
-.stage-chip { white-space: nowrap; }
+.stage-chip {
+  white-space: nowrap;
+}
 
-@media (max-width: 640px) {
-  .workspace-simple { padding: 0 12px; }
-  .hero { padding: 16px; }
+/* Chip trong summary có thể dài (danh sách capability), và summary là flex nên
+   nó không tự co -> đẩy cả trang tràn ngang trên màn hình hẹp. Cho phép xuống
+   dòng, và cắt bớt chip khi vẫn không đủ chỗ. */
+.compact-details summary {
+  flex-wrap: wrap;
+}
+
+.compact-details summary .meta-chip {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Mỗi cột là một cột dọc các khối rộng bằng nhau */
+.panel-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-width: 0;
+}
+
+.panel-stack > * {
+  width: 100%;
 }
