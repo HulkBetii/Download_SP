@@ -76,6 +76,14 @@ function cacheDom() {
   els.clearAll = $("clear-all");
   els.clearLog = $("clear-log");
   els.modeRadios = Array.from(document.querySelectorAll('input[name="optimize-mode"]'));
+  els.hero = $("hero");
+  els.heroHint = $("hero-hint");
+  els.setupStrip = $("setup-strip");
+  els.setupMessage = $("setup-message");
+  els.runSetup = $("run-setup");
+  els.nowCard = $("now-card");
+  els.nowTitle = $("now-title");
+  els.queueDetails = $("queue-details");
 }
 
 async function init() {
@@ -88,7 +96,9 @@ async function init() {
 }
 
 function bindEvents() {
-  els.autoDownload.addEventListener("click", handleAutoDownload);
+  els.autoDownload.addEventListener("click", handlePrimaryDownload);
+  els.runSetup.addEventListener("click", handleRunSetup);
+  bindDropZone();
   els.addUrl.addEventListener("click", handleAddUrl);
   els.pasteClipboard.addEventListener("click", handlePasteClipboard);
   els.analyzeUrl.addEventListener("click", handleAnalyzeUrl);
@@ -313,6 +323,8 @@ function applyState(state, options = {}) {
   });
 
   renderSummary(state);
+  renderDependencies(state.dependencies || {});
+  renderNowCard(state);
   renderCapabilities(state.capabilities || {});
   renderQueue(state.items);
   renderCandidates(state.lastCandidates || [], state.autoJob || {});
@@ -356,6 +368,55 @@ function renderSummary(state) {
   els.headerPill.textContent = state.summary || "0 / 0";
   els.queueSummary.textContent = state.summary || "Chưa có URL";
   els.selectionCount.textContent = `${selectedIds.size} mục được chọn`;
+}
+
+// The setup strip only appears when something is genuinely missing, so a
+// healthy install shows nothing but the URL box and the button.
+function renderDependencies(dependencies) {
+  if (!els.setupStrip) {
+    return;
+  }
+  const missing = [];
+  Object.entries(dependencies.pythonPackages || {}).forEach(([name, present]) => {
+    if (!present) {
+      missing.push(name);
+    }
+  });
+  if (dependencies.ffmpeg === false) {
+    missing.push("ffmpeg");
+  }
+  if (dependencies.ytDlpStale) {
+    missing.push("yt-dlp (bản cũ)");
+  }
+
+  if (!missing.length) {
+    els.setupStrip.hidden = true;
+    return;
+  }
+
+  els.setupStrip.hidden = false;
+  const frozen = Boolean(dependencies.frozen);
+  els.setupMessage.textContent = frozen
+    ? `Thiếu: ${missing.join(", ")}. Bản đóng gói không tự cài được.`
+    : `Thiếu: ${missing.join(", ")}.`;
+  els.runSetup.hidden = frozen;
+}
+
+function renderNowCard(state) {
+  if (!els.nowCard) {
+    return;
+  }
+  const running = Boolean(state.running);
+  const hasHistory = Boolean(state.batch?.total);
+  els.nowCard.hidden = !running && !hasHistory;
+
+  const autoJob = state.autoJob || {};
+  const active = (state.items || []).find((item) => item.status === "Đang tải" || item.status === "Đang xử lý");
+  if (els.nowTitle) {
+    els.nowTitle.textContent = active
+      ? hostFromUrl(active.url)
+      : (autoJob.sourceUrl ? hostFromUrl(autoJob.sourceUrl) : "Sẵn sàng");
+  }
 }
 
 function renderCapabilities(capabilities) {
@@ -773,6 +834,74 @@ async function handleAutoDownload() {
     browserMode: "visible",
     autoSelect: true,
   }));
+}
+
+// The single button in the hero. One link runs the auto ladder directly;
+// several become a queue batch, so the user never has to pick a mode.
+async function handlePrimaryDownload() {
+  const raw = els.singleUrl.value.trim();
+  if (!raw) {
+    setFooterStatus("Hãy dán link video vào ô phía trên.");
+    els.singleUrl.focus();
+    return;
+  }
+
+  const urls = raw.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (urls.length === 1) {
+    await handleAutoDownload();
+    els.singleUrl.value = "";
+    return;
+  }
+
+  const added = await postAction("/api/queue/add", { text: raw, source: "ô nhập" });
+  if (!added) {
+    return;
+  }
+  els.singleUrl.value = "";
+  if (els.queueDetails) {
+    els.queueDetails.open = true;
+  }
+  await postAction("/api/download/start", buildDownloadOptionsPayload());
+}
+
+async function handleRunSetup() {
+  els.runSetup.disabled = true;
+  els.setupMessage.textContent = "Đang kiểm tra và cài đặt...";
+  try {
+    await postAction("/api/setup/ensure", {});
+  } finally {
+    els.runSetup.disabled = false;
+  }
+}
+
+function bindDropZone() {
+  const zone = els.hero;
+  if (!zone) {
+    return;
+  }
+  ["dragenter", "dragover"].forEach((name) => {
+    zone.addEventListener(name, (event) => {
+      event.preventDefault();
+      zone.classList.add("hero-dragging");
+    });
+  });
+  ["dragleave", "drop"].forEach((name) => {
+    zone.addEventListener(name, (event) => {
+      event.preventDefault();
+      zone.classList.remove("hero-dragging");
+    });
+  });
+  zone.addEventListener("drop", (event) => {
+    const text = event.dataTransfer?.getData("text/uri-list")
+      || event.dataTransfer?.getData("text/plain")
+      || "";
+    if (!text.trim()) {
+      return;
+    }
+    const current = els.singleUrl.value.trim();
+    els.singleUrl.value = current ? `${current}\n${text.trim()}` : text.trim();
+    els.singleUrl.focus();
+  });
 }
 
 async function handleInspectMedia() {

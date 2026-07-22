@@ -258,7 +258,15 @@ button {
   margin-bottom: 10px;
 }
 
-.compact-details-body {
+/* Setting `display` on a direct child of <details> overrides the browser's own
+   collapse mechanism: the <details> box stays summary-height but the body
+   escapes it and paints at full height anyway. Gate the display on [open]
+   explicitly so collapsing does not depend on that behaviour. */
+.compact-details > .compact-details-body {
+  display: none;
+}
+
+.compact-details[open] > .compact-details-body {
   display: grid;
   gap: 10px;
 }
@@ -713,4 +721,98 @@ progress {
   .btn {
     width: 100%;
   }
+}
+
+/* ---- Hero: khối mặc định người dùng thấy (một ô URL + một nút) ---- */
+.workspace-simple {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 760px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.hero {
+  border: 1px solid var(--border, #2a3350);
+  border-radius: 14px;
+  padding: 20px;
+  background: var(--panel, #151c2f);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+/* Phản hồi khi kéo link vào ô */
+.hero-dragging {
+  border-color: var(--accent, #4c8dff);
+  background: rgba(76, 141, 255, 0.08);
+}
+
+.hero-field { display: flex; flex-direction: column; gap: 6px; }
+
+.hero-label { font-size: 13px; opacity: 0.75; }
+
+.hero-field textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 52px;
+  font: inherit;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border, #2a3350);
+  background: var(--input-bg, #0f1522);
+  color: inherit;
+  box-sizing: border-box;
+}
+
+.btn-hero { padding: 12px; font-size: 15px; font-weight: 600; }
+
+.hero-hint { font-size: 12px; opacity: 0.6; }
+
+/* Dải cài đặt: chỉ hiện khi thiếu thành phần, đủ rồi thì tự ẩn */
+.setup-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: rgba(255, 176, 32, 0.12);
+  border: 1px solid rgba(255, 176, 32, 0.35);
+  font-size: 13px;
+}
+
+.setup-message { flex: 1; }
+
+/* ---- Thẻ tiến trình ---- */
+.now-card {
+  border: 1px solid var(--border, #2a3350);
+  border-radius: 14px;
+  padding: 16px 20px;
+  background: var(--panel, #151c2f);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.now-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+.now-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.now-card progress { width: 100%; height: 8px; }
+
+.now-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.stage-chip { white-space: nowrap; }
+
+@media (max-width: 640px) {
+  .workspace-simple { padding: 0 12px; }
+  .hero { padding: 16px; }
 }

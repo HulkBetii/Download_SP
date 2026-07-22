@@ -31,6 +31,7 @@ from core.auto_pipeline import (
 )
 from core.downloader import download_video, get_runtime_capabilities
 from core.media_sniffer import MediaSnifferError, get_browser_capabilities, sniff_media_urls
+from core.runtime_deps import detect as detect_dependencies, ensure_all as ensure_dependencies
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -44,6 +45,10 @@ STATUS_FAILED = "Lỗi"
 
 VALID_OPTIMIZE_MODES = {"balanced", "speed", "quality"}
 MAX_LOG_ITEMS = 500
+# Parallel downloads per batch. Kept low on purpose: more connections to one
+# host is the fastest way to earn a rate limit.
+MAX_DOWNLOAD_WORKERS = 2
+RATE_LIMITED_HOST_MARKER = "sharepoint.com"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 FAVICON_PATH = project_root / "favicon.ico"
 
@@ -105,10 +110,12 @@ class AppState:
 
         self.output_folder = str(Path.home() / "Downloads")
         self.use_cookies = True
-        self.cookie_file = self._find_default_cookie_file() or ""
+        self.cookie_file = ""
         self.optimize_mode = "quality"
         self.capabilities = get_runtime_capabilities()
         self.browser_capabilities = get_browser_capabilities()
+        self.dependencies = detect_dependencies().to_dict()
+        self.setup_running = False
         self.use_browser_cookies = False
         self.browser_name = "coccoc"
         self.browser_profile = ""
@@ -227,6 +234,38 @@ class AppState:
             self._reset_batch_counters_locked()
             self._publish_locked()
             return {"cleared": cleared}
+
+    def run_setup(self) -> dict[str, Any]:
+        """Install whatever the environment is missing, reporting progress live."""
+        with self.lock:
+            if self.setup_running:
+                raise AppError(HTTPStatus.CONFLICT, "Dang cai dat, vui long doi.")
+            self.setup_running = True
+            self._append_log_locked("Bat dau kiem tra va cai dat thanh phan con thieu.", "info")
+            self._publish_locked()
+
+        def progress(message: str, level: str = "info") -> None:
+            with self.lock:
+                self._append_log_locked(self._compact_text(message, 180), level)
+                self._publish_locked()
+
+        try:
+            report = ensure_dependencies(progress)
+        except Exception as exc:
+            with self.lock:
+                self.setup_running = False
+                self._append_log_locked(f"Cai dat that bai: {self._clean_error_message(str(exc))}", "error")
+                self._publish_locked()
+            raise AppError(HTTPStatus.INTERNAL_SERVER_ERROR, f"Cai dat that bai: {exc}") from exc
+
+        with self.lock:
+            self.setup_running = False
+            self.dependencies = report.to_dict()
+            self.capabilities = get_runtime_capabilities()
+            summary = ", ".join(report.actions) if report.actions else "khong co gi phai cai them"
+            self._append_log_locked(f"Kiem tra xong: {summary}.", "success")
+            self._publish_locked()
+        return self.dependencies
 
     def clear_log(self) -> dict[str, int]:
         with self.lock:
@@ -738,19 +777,60 @@ class AppState:
             self.handle_download_done(item_id, success=True)
 
     def _batch_download_worker(self, work_items: list[tuple[int, str]], output_folder: str, cookie_file: str | None, optimize_mode: str, advanced_options: dict[str, Any]) -> None:
-        for item_id, url in work_items:
-            with self.lock:
-                item = self.items_by_id.get(item_id)
-                if not item:
-                    continue
-                item.status = STATUS_RUNNING
-                item.progress = 0
-                item.speed = "-"
-                item.eta = "-"
-                item.update_text = "Đang tải"
-                item.error = ""
-                self._publish_locked()
-            self._download_worker(item_id, url, output_folder, cookie_file, optimize_mode, advanced_options)
+        pending: queue.Queue[tuple[int, str]] = queue.Queue()
+        for entry in work_items:
+            pending.put(entry)
+
+        def consume() -> None:
+            while True:
+                try:
+                    item_id, url = pending.get_nowait()
+                except queue.Empty:
+                    return
+                try:
+                    with self.lock:
+                        item = self.items_by_id.get(item_id)
+                        if not item:
+                            continue
+                        item.status = STATUS_RUNNING
+                        item.progress = 0
+                        item.speed = "-"
+                        item.eta = "-"
+                        item.update_text = "Đang tải"
+                        item.error = ""
+                        self._publish_locked()
+                    self._download_worker(item_id, url, output_folder, cookie_file, optimize_mode, advanced_options)
+                finally:
+                    pending.task_done()
+
+        worker_count = self._resolve_worker_count(work_items)
+        if worker_count <= 1:
+            consume()
+            return
+
+        threads = [
+            threading.Thread(target=consume, daemon=True, name=f"vdt-download-{index}")
+            for index in range(worker_count)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    def _resolve_worker_count(self, work_items: list[tuple[int, str]]) -> int:
+        """Parallelism for a batch, dropped to 1 for rate-limit sensitive hosts.
+
+        SharePoint downloads are deliberately throttled in the downloader to
+        avoid 429s; running several at once would defeat that. A host appearing
+        repeatedly in one batch is also a reason to stay sequential.
+        """
+        if len(work_items) <= 1:
+            return 1
+
+        hosts = [self._extract_host(url).lower() for _item_id, url in work_items]
+        if any(RATE_LIMITED_HOST_MARKER in host for host in hosts):
+            return 1
+        return min(MAX_DOWNLOAD_WORKERS, len(work_items))
 
     def _download_worker(self, item_id: int, url: str, output_folder: str, cookie_file: str | None, optimize_mode: str, advanced_options: dict[str, Any]) -> None:
         def status_callback(status_text: str, color: str = "blue") -> None:
@@ -1031,6 +1111,7 @@ class AppState:
             },
             "capabilities": dict(self.capabilities),
             "browserCapabilities": dict(self.browser_capabilities),
+            "dependencies": dict(self.dependencies),
         }
 
     def _reset_batch_counters_locked(self) -> None:
@@ -1123,20 +1204,6 @@ class AppState:
         self.logs.append({"timestamp": timestamp, "message": message, "level": level})
         if len(self.logs) > MAX_LOG_ITEMS:
             del self.logs[: len(self.logs) - MAX_LOG_ITEMS]
-
-    def _find_default_cookie_file(self) -> str | None:
-        search_dirs = [project_root, project_root / "examples"]
-        for search_dir in search_dirs:
-            if not search_dir.is_dir():
-                continue
-            try:
-                for path in search_dir.iterdir():
-                    lowered = path.name.lower()
-                    if path.is_file() and lowered.endswith((".json", ".txt")) and ("cookie" in lowered or "sharepoint" in lowered):
-                        return str(path)
-            except OSError:
-                continue
-        return None
 
     def _clean_url(self, value: str) -> str:
         text = (value or "").strip()
@@ -1333,6 +1400,10 @@ class VideoDownloaderRequestHandler(BaseHTTPRequestHandler):
             if path == "/api/download/auto":
                 result = self.app_state.start_auto_download(payload)
                 self._send_json({"ok": True, **result})
+                return
+            if path == "/api/setup/ensure":
+                result = self.app_state.run_setup()
+                self._send_json({"ok": True, "dependencies": result, "state": self.app_state.snapshot()})
                 return
             if path == "/api/log/clear":
                 result = self.app_state.clear_log()

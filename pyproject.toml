@@ -1,0 +1,24 @@
+[project]
+name = "video-downloader-tool"
+version = "2.0.0"
+description = "Local web UI video downloader built on yt-dlp with browser media sniffing"
+requires-python = ">=3.11"
+dependencies = [
+    "yt-dlp>=2026.7.4",
+    "curl_cffi>=0.7.0",
+    "brotli>=1.1.0",
+    "requests>=2.32.0",
+]
+
+[project.optional-dependencies]
+# yt-dlp plugins keo theo Node.js hoac binary rieng; tach ra de cai co chon loc.
+plugins = [
+    "bgutil-ytdlp-pot-provider>=0.5.0",
+    "yt-dlp-ChromeCookieUnlock>=0.1.0",
+]
+
+[project.scripts]
+video-downloader = "run:main"
+
+[tool.setuptools]
+packages = ["core", "utils", "web_ui", "ui"]

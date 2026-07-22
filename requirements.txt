@@ -1,0 +1,14 @@
+# Video Downloader Tool - runtime dependencies
+#
+# yt-dlp phat hanh rat thuong xuyen; ban cu la nguyen nhan hong site pho bien nhat.
+# Khong pin cung phien ban de core/runtime_deps.py co the tu cap nhat.
+yt-dlp>=2026.7.4
+
+# TLS/JA3 impersonation. Thieu goi nay thi moi site kiem tra TLS fingerprint deu chan.
+curl_cffi>=0.7.0
+
+# Giai nen brotli cho cac response dung Content-Encoding: br
+brotli>=1.1.0
+
+# Dung cho preflight SharePoint va tai manifest trong media_sniffer
+requests>=2.32.0

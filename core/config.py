@@ -3,12 +3,65 @@
 Cấu hình cho video downloader
 """
 
+from urllib.parse import parse_qs, urlparse
+
+# Trần số mục khi tải playlist/channel. Không có trần thì một link channel
+# có thể kéo về hàng nghìn video mà người dùng không kịp phản ứng.
+DEFAULT_PLAYLIST_LIMIT = 50
+
+
+def resolve_playlist_mode(url):
+    """Quyết định tải một video hay cả playlist, dựa trên chủ đích của URL.
+
+    Đây KHÔNG phải chuyện chỉ bỏ `noplaylist` đi. URL dạng
+    `watch?v=X&list=Y` cực kỳ phổ biến — mọi video mở từ playlist đều mang
+    theo `&list=` — nên coi mọi URL có `list=` là playlist sẽ biến một cú dán
+    link thành hàng trăm video. UI mới chỉ có một nút nên người dùng cũng
+    không có chỗ nào để chặn lại.
+
+    Chỉ coi là playlist khi URL chủ đích trỏ tới playlist/channel.
+
+    :return: dict tùy chọn yt-dlp (`noplaylist`, và `playlistend` nếu cần)
+    """
+    text = str(url or "").strip()
+    if not text:
+        return {'noplaylist': True}
+
+    try:
+        parsed = urlparse(text)
+    except ValueError:
+        return {'noplaylist': True}
+
+    path = (parsed.path or "").lower()
+    query = parse_qs(parsed.query or "")
+
+    # Có mã video cụ thể => người dùng muốn đúng video đó, dù link kèm list.
+    if query.get('v'):
+        return {'noplaylist': True}
+
+    is_playlist_path = any(
+        marker in path
+        for marker in ('/playlist', '/channel/', '/user/', '/c/', '/sets/', '/album/')
+    )
+    is_handle_path = path.startswith('/@')
+    has_bare_list = bool(query.get('list'))
+
+    if is_playlist_path or is_handle_path or has_bare_list:
+        return {'noplaylist': False, 'playlistend': DEFAULT_PLAYLIST_LIMIT}
+
+    return {'noplaylist': True}
+
 # Giá trị User-Agent mặc định (giống trình duyệt thật để tránh bị chặn)
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/129.0.0.0 Safari/537.36"
 )
+
+# Target impersonation mặc định khi curl_cffi có sẵn.
+# Nhiều site so JA3/JA4 với User-Agent; header giả Chrome + TLS fingerprint Python
+# là lý do bị chặn phổ biến nhất, nên bật mặc định thay vì để người dùng tự điền.
+DEFAULT_IMPERSONATE_TARGET = "chrome"
 
 # Header HTTP chung dùng cho mọi request của yt-dlp
 DEFAULT_HTTP_HEADERS = {

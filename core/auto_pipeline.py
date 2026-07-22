@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 from pathlib import Path
 from typing import Any, Callable
 
 from yt_dlp.utils import DownloadError
 
 from .analyzer import analyze_video
+from .errors import FailureKind, classify, should_fallback_to_sniff
 from .downloader import download_video
 from .media_sniffer import (
     MediaCandidate,
@@ -190,33 +190,13 @@ def download_media_candidate(
 
 
 def is_retryable_media_error(message: str) -> bool:
-    text = str(message or "").lower()
-    return any(
-        token in text
-        for token in (
-            "http error 401",
-            "http error 403",
-            "unauthorized",
-            "forbidden",
-            "expired",
-            "token",
-            "signature",
-        )
-    )
+    """A media link that failed because its credentials/token went stale."""
+    return classify(message) in {FailureKind.AUTH_REQUIRED, FailureKind.TOKEN_EXPIRED}
 
 
 def is_unsupported_error(message: str) -> bool:
-    text = str(message or "").lower()
-    folded_text = _fold_ascii(text)
-    return (
-        "unsupported url" in text
-        or "no suitable extractor" in text
-        or "khong duoc yt-dlp ho tro" in folded_text
-    )
-
-def _fold_ascii(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", str(value or ""))
-    return normalized.encode("ascii", "ignore").decode("ascii").lower()
+    """yt-dlp has no extractor for this URL. Kept public: server.py imports it."""
+    return classify(message) is FailureKind.UNSUPPORTED_URL
 
 
 def _sniff_select_download(
@@ -270,8 +250,33 @@ def _sniff_select_download(
     selected = select_best_candidate(candidates, page_url=source_url)
     if not selected:
         message = _selection_failure_message(candidates, diagnostics, probe_error)
-        emit(AUTO_STAGE_FAILED, message, level="error", progress=100, candidates=[c.to_dict(include_sensitive_headers=True) for c in candidates], diagnostics=diagnostics)
-        raise DownloadError(message)
+        emit(
+            AUTO_STAGE_SELECTING,
+            message,
+            level="warning",
+            progress=78,
+            candidates=[c.to_dict(include_sensitive_headers=True) for c in candidates],
+            diagnostics=diagnostics,
+        )
+        # No candidate does not mean the end of the road: the page may be feeding
+        # a player through MediaSource, which leaves nothing for the candidate
+        # scorer to pick. escalate() stops by itself on confirmed DRM.
+        return _escalate_below_sniff(
+            source_url,
+            output_folder,
+            DownloadError(message),
+            browser_name,
+            browser_path,
+            browser_profile,
+            browser_mode,
+            sniff_timeout_seconds,
+            advanced_options,
+            emit,
+            status_callback,
+            # Confirmed protection comes from the candidates themselves, not from
+            # the wording of the message above - a license *hint* is a suspicion.
+            drm_confirmed=any(candidate.drm_signals for candidate in candidates),
+        )
 
     if not auto_select and selected.score < 80:
         message = "AutoSelect dang tat hoac candidate chua du manh; hay chon trong Media Inspector."
@@ -341,6 +346,49 @@ def _sniff_select_download(
     }
 
 
+def _escalate_below_sniff(
+    source_url: str,
+    output_folder: str,
+    sniff_error: BaseException,
+    browser_name: str,
+    browser_path: str,
+    browser_profile: str,
+    browser_mode: str,
+    sniff_timeout_seconds: int,
+    advanced_options: dict[str, Any],
+    emit: Callable[..., None],
+    status_callback: Callable[[str, str], None] | None,
+    drm_confirmed: bool = False,
+) -> dict[str, Any]:
+    """Hand off to the MSE and recorder rungs in core.strategy."""
+    from .strategy import escalate
+
+    headers = advanced_options.get("httpHeaders") or advanced_options.get("mediaHeaders") or {}
+
+    def event_callback(payload: dict[str, Any]) -> None:
+        emit(
+            payload.get("stage", "retrying"),
+            payload.get("message", ""),
+            level=payload.get("level", "info"),
+            progress=payload.get("progress"),
+        )
+
+    return escalate(
+        source_url,
+        output_folder,
+        sniff_error,
+        browser_name=browser_name,
+        browser_path=browser_path,
+        browser_profile=browser_profile,
+        browser_mode=browser_mode,
+        timeout_seconds=sniff_timeout_seconds,
+        headers=headers if isinstance(headers, dict) else {},
+        drm_confirmed=drm_confirmed,
+        emit=event_callback,
+        status_callback=status_callback,
+    )
+
+
 def _advanced_with_candidate_headers(
     advanced_options: dict[str, Any],
     candidate: MediaCandidate,
@@ -379,8 +427,10 @@ def _make_emitter(callback: AutoEventCallback | None) -> Callable[..., None]:
 
 
 def _should_fallback_to_sniff(message: str) -> bool:
-    if is_unsupported_error(message) or is_retryable_media_error(message):
+    if should_fallback_to_sniff(message):
         return True
+    # Extractor breakage is worth a sniff even when it does not classify cleanly:
+    # a site changed its markup and the browser can still see the real request.
     text = str(message or "").lower()
     return "extractor" in text or "unable to extract" in text
 

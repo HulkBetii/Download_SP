@@ -29,11 +29,15 @@ except Exception:
     YT_DLP_VERSION = "unknown"
 
 from .config import (
+    DEFAULT_IMPERSONATE_TARGET,
     DOWNLOAD_CONFIG,
     FFMPEG_CONFIG,
     QUALITY_OPTIMIZED_CONFIG,
     SPEED_OPTIMIZED_CONFIG,
+    resolve_playlist_mode,
 )
+from .errors import FailureKind, classify
+from .plugins import register_plugin_dirs, resolve_js_runtimes
 
 # Add the project root to the path for absolute imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -375,8 +379,7 @@ def _strip_ytdlp_error_prefix(message):
     return text
 
 def _is_browser_cookie_database_error(message):
-    text = _strip_ytdlp_error_prefix(message).lower()
-    return "could not copy chrome cookie database" in text
+    return classify(message) is FailureKind.COOKIE_DB_LOCKED
 
 def _browser_cookie_database_error_message(browser_cookie_spec):
     browser_display = _format_cookiesfrombrowser_spec(browser_cookie_spec) or "trinh duyet"
@@ -387,8 +390,7 @@ def _browser_cookie_database_error_message(browser_cookie_spec):
     )
 
 def _is_unsupported_url_error(message):
-    text = _strip_ytdlp_error_prefix(message).lower()
-    return "unsupported url" in text or "no suitable extractor" in text
+    return classify(message) is FailureKind.UNSUPPORTED_URL
 
 def _unsupported_url_error_message(source_url):
     return (
@@ -456,6 +458,33 @@ def _apply_context_headers(request_headers, advanced):
     if advanced.get("user_agent"):
         headers["User-Agent"] = advanced["user_agent"]
     return headers
+
+def _apply_external_downloader(ydl_opts, is_sharepoint, status_callback=None):
+    """Route downloads through aria2c when it is available.
+
+    Skipped for SharePoint: that path already runs deliberately throttled to
+    avoid 429s ([download_video] lowers concurrency and sets rate limits), and
+    aria2c opening many parallel connections would undo exactly that.
+    """
+    if is_sharepoint:
+        return
+
+    try:
+        from .runtime_deps import resolve_binary
+    except ImportError:
+        return
+
+    aria2c = resolve_binary("aria2c")
+    if not aria2c:
+        return
+
+    ydl_opts["external_downloader"] = {"default": aria2c}
+    ydl_opts["external_downloader_args"] = {
+        "default": ["-x", "8", "-s", "8", "-k", "1M", "--console-log-level=warn"],
+    }
+    if status_callback:
+        status_callback("Dung aria2c de tai nhanh hon.", "blue")
+
 
 def _preview_formats(formats, limit=12):
     preview = []
@@ -742,16 +771,40 @@ def download_video(url, output_folder, cookie_file=None, status_callback=None, o
     if advanced["download_archive"]:
         ydl_opts["download_archive"] = advanced["download_archive"]
 
-    if advanced["impersonate"]:
-        if not get_runtime_capabilities()["curlCffiAvailable"]:
-            if status_callback:
-                status_callback("curl_cffi chua duoc cai, bo qua impersonation.", "orange")
-        else:
-            ydl_opts["impersonate"] = _normalize_impersonate_target(advanced["impersonate"])
-            if status_callback:
-                status_callback(f"Impersonate target: {advanced['impersonate']}", "blue")
+    # Impersonation mặc định bật khi curl_cffi có sẵn: phần lớn site chặn là do
+    # TLS fingerprint không khớp User-Agent, không phải do thiếu cookie.
+    impersonate_target = advanced["impersonate"] or DEFAULT_IMPERSONATE_TARGET
+    capabilities = get_runtime_capabilities()
+    if not (capabilities["curlCffiAvailable"] and capabilities["impersonationAvailable"]):
+        # Chỉ cảnh báo khi người dùng yêu cầu rõ; mặc định thì im lặng bỏ qua.
+        if advanced["impersonate"] and status_callback:
+            status_callback("curl_cffi chua duoc cai, bo qua impersonation.", "orange")
+    else:
+        normalized_target = _normalize_impersonate_target(impersonate_target)
+        if normalized_target is not None:
+            ydl_opts["impersonate"] = normalized_target
+            if advanced["impersonate"] and status_callback:
+                status_callback(f"Impersonate target: {impersonate_target}", "blue")
 
     ydl_opts['http_headers'] = request_headers
+
+    # yt-dlp chỉ bật deno mặc định; máy chỉ có node sẽ bị coi là không có JS runtime
+    # và YouTube rơi vào nhánh deprecated (thiếu format). Khai báo đúng thứ đang cài.
+    js_runtimes = resolve_js_runtimes()
+    if js_runtimes:
+        ydl_opts['js_runtimes'] = js_runtimes
+    register_plugin_dirs()
+
+    # Playlist chỉ bật khi URL chủ đích là playlist/channel; xem resolve_playlist_mode.
+    playlist_mode = resolve_playlist_mode(url)
+    ydl_opts.update(playlist_mode)
+    if not playlist_mode.get('noplaylist', True) and status_callback:
+        limit = playlist_mode.get('playlistend')
+        status_callback(f"Phat hien playlist/channel, se tai toi da {limit} muc.", "orange")
+
+    # aria2c mở nhiều kết nối song song nên thường nhanh hơn downloader nội bộ.
+    # Chỉ dùng khi có sẵn; không có thì giữ concurrent_fragment_downloads.
+    _apply_external_downloader(ydl_opts, is_sharepoint, status_callback)
     
     # Force SharePoint extractor if available
     if is_sharepoint:
@@ -899,15 +952,16 @@ def download_video(url, output_folder, cookie_file=None, status_callback=None, o
                         status_callback(f"❌ Thu lai khong cookies cung loi: {fallback_text}", "red")
                     raise DownloadError(f"{browser_cookie_message} Thu lai khong cookies cung loi: {fallback_text}.")
 
-            hit_429 = 'HTTP Error 429' in error_text
-            hit_401 = 'HTTP Error 401' in error_text or 'Unauthorized' in error_text
-            hit_403 = 'HTTP Error 403' in error_text or 'Forbidden' in error_text
-            hit_404 = 'HTTP Error 404' in error_text or 'Not Found' in error_text
-            hit_unsupported = _is_unsupported_url_error(error_text)
-            
+            # Phân loại tập trung ở core.errors thay vì so chuỗi rời rạc tại chỗ.
+            failure_kind = classify(error_text)
+            hit_429 = failure_kind is FailureKind.RATE_LIMITED
+            hit_auth = failure_kind is FailureKind.AUTH_REQUIRED
+            hit_404 = failure_kind is FailureKind.NOT_FOUND
+            hit_unsupported = failure_kind is FailureKind.UNSUPPORTED_URL
+
             # Better error messages for cookie/authentication issues
             if status_callback:
-                if hit_401 or hit_403:
+                if hit_auth:
                     if is_sharepoint:
                         status_callback("❌ Lỗi xác thực (401/403). Kiểm tra lại cookie file - cần có FedAuth và rtFa cookies. Cookies có thể đã hết hạn.", "red")
                     else:
@@ -937,7 +991,7 @@ def download_video(url, output_folder, cookie_file=None, status_callback=None, o
                 continue
             
             # Don't retry on authentication errors
-            if hit_401 or hit_403:
+            if hit_auth:
                 if status_callback:
                     status_callback("❌ Lỗi không thể tự động sửa. Vui lòng kiểm tra URL/cookies/quyền truy cập và thử lại.", "red")
                 raise DownloadError("Xác thực thất bại (401/403). Kiểm tra cookies/quyền truy cập.")

@@ -37,7 +37,27 @@ MEDIA_MIME_HINTS = (
     "application/x-mpegurl",
     "application/dash+xml",
 )
-DRM_URL_TOKENS = ("widevine", "playready", "fairplay", "/license", "license.", "drm", "eme")
+# Unambiguous DRM systems - these names appear nowhere innocent.
+DRM_SYSTEM_RE = re.compile(r"widevine|playready|fairplay|clearkey", re.IGNORECASE)
+
+# License-acquisition endpoints. Anchored on separators so "license" only counts
+# as its own path segment or filename part.
+DRM_LICENSE_ENDPOINT_RE = re.compile(
+    r"(?:^|[/._-])"
+    r"(?:licen[cs]e(?:server|proxy|request)?|getlicen[cs]e|acquirelicen[cs]e|drm)"
+    r"(?:[/._?&=-]|$)",
+    re.IGNORECASE,
+)
+
+# Ordinary licensing links that are not DRM at all. Free-to-download video sites
+# link to these constantly, and treating them as DRM makes the tool refuse
+# perfectly downloadable content.
+BENIGN_LICENSE_RE = re.compile(
+    r"creativecommons\.org"
+    r"|/licen[cs]es?/(?:by|cc|mit|apache|gpl|lgpl|bsd|mpl)"
+    r"|licen[cs]e\.(?:txt|md|html?|php)$",
+    re.IGNORECASE,
+)
 NOISY_URL_TOKENS = (
     "thumbnail",
     "thumb",
@@ -225,6 +245,8 @@ def sniff_media_urls(
     port = _find_free_port()
     temp_profile = None
     user_data_dir = _usable_profile_path(profile_path)
+    if not user_data_dir:
+        user_data_dir = _persistent_profile_dir(browser_name)
     if not user_data_dir:
         temp_profile = tempfile.TemporaryDirectory(prefix="video_downloader_sniff_")
         user_data_dir = temp_profile.name
@@ -555,10 +577,45 @@ def _usable_profile_path(profile_path: str) -> str:
     return expanded if os.path.isdir(expanded) else ""
 
 
+def _persistent_profile_dir(browser_name: str) -> str:
+    """Tool-owned browser profile that survives between sniff runs.
+
+    Previously every sniff got a fresh ``TemporaryDirectory``, so any login the
+    user completed in the sniffer window was thrown away the moment it closed -
+    sites behind a login could never be captured twice. A stable directory lets
+    them sign in once.
+
+    Kept per browser because Chromium refuses to share a profile between
+    different builds. Falls back to "" (caller uses a temp dir) if the location
+    is not writable.
+    """
+    try:
+        from .runtime_deps import browser_profile_dir
+
+        safe_name = re.sub(r"[^a-z0-9_-]", "", str(browser_name or "chrome").lower()) or "chrome"
+        directory = browser_profile_dir() / safe_name
+        directory.mkdir(parents=True, exist_ok=True)
+        return str(directory)
+    except (ImportError, OSError):
+        return ""
+
+
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
+
+
+# Chrome ships background services that are useless for sniffing but expensive on
+# disk: a fresh profile pulled ~49MB of optimization-guide ML models plus an
+# uncapped HTTP cache. The profile is now persistent, so that would accumulate
+# in the user's AppData indefinitely.
+DISABLED_BROWSER_FEATURES = (
+    "LockProfileCookieDatabase",
+    "OptimizationGuideModelDownloading",
+    "OptimizationHints",
+)
+BROWSER_DISK_CACHE_BYTES = 50 * 1024 * 1024
 
 
 def _launch_browser(browser_exe: str, port: int, user_data_dir: str, browser_mode: str = "visible") -> subprocess.Popen:
@@ -570,7 +627,11 @@ def _launch_browser(browser_exe: str, port: int, user_data_dir: str, browser_mod
         "--no-default-browser-check",
         "--disable-popup-blocking",
         "--autoplay-policy=no-user-gesture-required",
-        "--disable-features=LockProfileCookieDatabase",
+        # Chrome honours only the last --disable-features, so these must be one flag.
+        f"--disable-features={','.join(DISABLED_BROWSER_FEATURES)}",
+        f"--disk-cache-size={BROWSER_DISK_CACHE_BYTES}",
+        "--disable-component-update",
+        "--disable-background-networking",
         "about:blank",
     ]
     if str(browser_mode or "").lower() == "headless":
@@ -739,8 +800,23 @@ def _media_kind(url: str, mime_type: str = "") -> str:
 
 
 def _is_license_url(url: str) -> bool:
-    lower_url = (url or "").lower()
-    return bool(lower_url) and any(token in lower_url for token in DRM_URL_TOKENS)
+    """Whether a URL looks like a DRM license acquisition request.
+
+    Deliberately conservative. The earlier version matched bare substrings, so
+    "eme" hit inside "themes", "drm" hit any hostname containing those letters,
+    and a Creative Commons link counted as DRM. That is not a harmless
+    over-report: a license diagnostic changes the failure message the user sees
+    and pushes the ladder toward "we do not bypass DRM" for content that has no
+    protection at all.
+    """
+    text = (url or "").strip()
+    if not text:
+        return False
+    if DRM_SYSTEM_RE.search(text):
+        return True
+    if BENIGN_LICENSE_RE.search(text):
+        return False
+    return bool(DRM_LICENSE_ENDPOINT_RE.search(text))
 
 
 def _inspect_manifest_candidates(candidates: list[MediaCandidate]) -> None:
@@ -1027,28 +1103,49 @@ def _default_user_agent() -> str:
 
 
 class _CdpSession:
+    DEFAULT_CALL_TIMEOUT = 5.0
+    # Events that arrive while waiting for a command result are buffered. During
+    # a long capture that can be thousands of messages, so the buffer is capped
+    # and drops oldest-first rather than growing without bound.
+    MAX_EVENT_BUFFER = 2000
+
     def __init__(self, websocket: "_CdpWebSocket"):
         self.websocket = websocket
         self.next_id = 1
         self.event_buffer: list[dict[str, Any]] = []
+        self.dropped_events = 0
 
-    def call(self, method: str, params: dict[str, Any] | None = None, session_id: str | None = None) -> Any:
+    def call(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        session_id: str | None = None,
+        timeout: float | None = None,
+    ) -> Any:
         command_id = self.next_id
         self.next_id += 1
         payload = {"id": command_id, "method": method, "params": params or {}}
         if session_id:
             payload["sessionId"] = session_id
         self.websocket.send_json(payload)
-        deadline = time.time() + 5
+
+        deadline = time.time() + (timeout if timeout is not None else self.DEFAULT_CALL_TIMEOUT)
         while time.time() < deadline:
-            message = self.websocket.recv_json(timeout=1)
+            message = self.websocket.recv_json(timeout=min(1.0, max(0.05, deadline - time.time())))
             if message and message.get("id") == command_id:
                 if "error" in message:
                     raise MediaSnifferError(str(message["error"]))
                 return message.get("result")
             if message and message.get("method"):
-                self.event_buffer.append(message)
+                self._buffer_event(message)
         raise MediaSnifferError(f"CDP command timeout: {method}")
+
+    def _buffer_event(self, message: dict[str, Any]) -> None:
+        self.event_buffer.append(message)
+        if len(self.event_buffer) > self.MAX_EVENT_BUFFER:
+            overflow = len(self.event_buffer) - self.MAX_EVENT_BUFFER
+            del self.event_buffer[:overflow]
+            self.dropped_events += overflow
 
     def recv(self, timeout: float = 1.0) -> dict[str, Any] | None:
         if self.event_buffer:
@@ -1056,7 +1153,28 @@ class _CdpSession:
         return self.websocket.recv_json(timeout=timeout)
 
 
+def _xor_mask(payload: bytes, mask: bytes) -> bytes:
+    """Apply a WebSocket mask.
+
+    Done as a single big-integer XOR rather than a per-byte generator: the
+    previous approach cost a Python-level loop iteration per byte, which is fine
+    for small JSON commands but unusable once media payloads are involved.
+    """
+    if not mask or not payload:
+        return payload
+    repeated = (mask * (len(payload) // len(mask) + 1))[: len(payload)]
+    masked = int.from_bytes(payload, "big") ^ int.from_bytes(repeated, "big")
+    return masked.to_bytes(len(payload), "big")
+
+
 class _CdpWebSocket:
+    OPCODE_CONTINUATION = 0x0
+    OPCODE_TEXT = 0x1
+    OPCODE_BINARY = 0x2
+    OPCODE_CLOSE = 0x8
+    OPCODE_PING = 0x9
+    OPCODE_PONG = 0xA
+
     def __init__(self, ws_url: str):
         parsed = urllib.parse.urlparse(ws_url)
         self.host = parsed.hostname or "127.0.0.1"
@@ -1065,6 +1183,10 @@ class _CdpWebSocket:
         if parsed.query:
             self.path += f"?{parsed.query}"
         self.sock: socket.socket | None = None
+        # Bytes received but not yet forming a complete frame.
+        self._buffer = bytearray()
+        # Payload accumulated across continuation frames.
+        self._fragments = bytearray()
 
     def connect(self) -> None:
         key = base64.b64encode(os.urandom(16)).decode("ascii")
@@ -1098,24 +1220,23 @@ class _CdpWebSocket:
 
     def send_json(self, payload: dict[str, Any]) -> None:
         data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        self._send_frame(data)
+        self._send_frame(data, opcode=self.OPCODE_TEXT)
 
     def recv_json(self, timeout: float = 1.0) -> dict[str, Any] | None:
-        if not self.sock:
-            return None
-        original_timeout = self.sock.gettimeout()
-        self.sock.settimeout(timeout)
-        try:
-            payload = self._recv_frame()
-        except socket.timeout:
-            return None
-        finally:
-            self.sock.settimeout(original_timeout)
+        """Return the next complete CDP message, or None if none arrived in time.
+
+        Never leaves the stream mid-frame: bytes accumulate in a persistent
+        buffer and are only consumed once a whole frame is present. The previous
+        implementation read directly from the socket, so a timeout partway
+        through a frame discarded the exception but kept the consumed bytes, and
+        every subsequent read started at a frame boundary that no longer existed.
+        """
+        payload = self._recv_message(timeout)
         if not payload:
             return None
         try:
             return json.loads(payload.decode("utf-8"))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             return None
 
     def close(self) -> None:
@@ -1125,11 +1246,15 @@ class _CdpWebSocket:
             self.sock.close()
         finally:
             self.sock = None
+            self._buffer.clear()
+            self._fragments.clear()
 
-    def _send_frame(self, payload: bytes) -> None:
+    # -- framing ----------------------------------------------------------
+
+    def _send_frame(self, payload: bytes, opcode: int) -> None:
         if not self.sock:
             raise MediaSnifferError("Websocket is not connected")
-        header = bytearray([0x81])
+        header = bytearray([0x80 | opcode])
         length = len(payload)
         if length < 126:
             header.append(0x80 | length)
@@ -1141,39 +1266,101 @@ class _CdpWebSocket:
             header.extend(struct.pack("!Q", length))
         mask = os.urandom(4)
         header.extend(mask)
-        masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
-        self.sock.sendall(bytes(header) + masked)
+        self.sock.sendall(bytes(header) + _xor_mask(payload, mask))
 
-    def _recv_frame(self) -> bytes:
-        if not self.sock:
-            return b""
-        first = self._recv_exact(2)
-        if not first:
-            return b""
-        opcode = first[0] & 0x0F
-        length = first[1] & 0x7F
+    def _recv_message(self, timeout: float) -> bytes:
+        """Assemble one application message, handling fragments and control frames."""
+        deadline = time.time() + max(0.0, timeout)
+        while True:
+            frame = self._take_frame()
+            if frame is None:
+                if not self._fill(deadline):
+                    return b""
+                continue
+
+            fin, opcode, payload = frame
+
+            if opcode == self.OPCODE_CLOSE:
+                # Surfacing this as an error matters: previously a close frame
+                # became an empty payload, indistinguishable from "nothing yet",
+                # so a dropped connection looked like an idle one forever.
+                self.close()
+                raise MediaSnifferError("DevTools websocket closed by browser")
+            if opcode == self.OPCODE_PING:
+                self._send_frame(payload, opcode=self.OPCODE_PONG)
+                continue
+            if opcode == self.OPCODE_PONG:
+                continue
+
+            if opcode == self.OPCODE_CONTINUATION:
+                self._fragments.extend(payload)
+            else:
+                self._fragments = bytearray(payload)
+
+            if fin:
+                message = bytes(self._fragments)
+                self._fragments.clear()
+                return message
+
+    def _take_frame(self) -> tuple[bool, int, bytes] | None:
+        """Pop one complete frame from the buffer, or None if it is incomplete.
+
+        Nothing is consumed unless a whole frame is available, which is what
+        makes a mid-frame timeout harmless.
+        """
+        buffer = self._buffer
+        if len(buffer) < 2:
+            return None
+
+        length = buffer[1] & 0x7F
+        offset = 2
         if length == 126:
-            length = struct.unpack("!H", self._recv_exact(2))[0]
+            if len(buffer) < offset + 2:
+                return None
+            length = struct.unpack("!H", bytes(buffer[offset:offset + 2]))[0]
+            offset += 2
         elif length == 127:
-            length = struct.unpack("!Q", self._recv_exact(8))[0]
-        mask = b""
-        if first[1] & 0x80:
-            mask = self._recv_exact(4)
-        payload = self._recv_exact(length) if length else b""
-        if mask:
-            payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
-        if opcode in {0x8, 0x9}:
-            return b""
-        return payload
+            if len(buffer) < offset + 8:
+                return None
+            length = struct.unpack("!Q", bytes(buffer[offset:offset + 8]))[0]
+            offset += 8
 
-    def _recv_exact(self, length: int) -> bytes:
-        chunks = bytearray()
-        while len(chunks) < length:
-            chunk = self.sock.recv(length - len(chunks))  # type: ignore[union-attr]
-            if not chunk:
-                break
-            chunks.extend(chunk)
-        return bytes(chunks)
+        masked = bool(buffer[1] & 0x80)
+        mask = b""
+        if masked:
+            if len(buffer) < offset + 4:
+                return None
+            mask = bytes(buffer[offset:offset + 4])
+            offset += 4
+
+        if len(buffer) < offset + length:
+            return None
+
+        fin = bool(buffer[0] & 0x80)
+        opcode = buffer[0] & 0x0F
+        payload = bytes(buffer[offset:offset + length])
+        del buffer[: offset + length]
+        return fin, opcode, _xor_mask(payload, mask) if masked else payload
+
+    def _fill(self, deadline: float) -> bool:
+        """Read more bytes into the buffer. False when nothing arrived in time."""
+        if not self.sock:
+            return False
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return False
+        self.sock.settimeout(remaining)
+        try:
+            chunk = self.sock.recv(65536)
+        except socket.timeout:
+            return False
+        except OSError as exc:
+            raise MediaSnifferError(f"DevTools websocket read failed: {exc}") from exc
+        if not chunk:
+            self.close()
+            raise MediaSnifferError("DevTools websocket connection closed")
+        self._buffer.extend(chunk)
+        return True
 
 
 def _stop_process(process: subprocess.Popen) -> None:

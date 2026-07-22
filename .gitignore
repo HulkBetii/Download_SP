@@ -59,7 +59,21 @@ downloads_test/
 *.part
 *.part-*
 *.ytdl
+# Blanket-ignore ad-hoc probe scripts (they hit the network on import), but the
+# real unittest suite must be tracked - it is the evidence the tool works.
 test_*.py
+!test_auto_pipeline.py
+!test_cdp_websocket.py
+!test_downloader_options.py
+!test_errors.py
+!test_media_sniffer.py
+!test_mse_capture.py
+!test_phase6.py
+!test_plugins.py
+!test_profile_cookies.py
+!test_runtime_deps.py
+!test_strategy.py
+!test_web_ui.py
 TEST_RESULTS.md
 FIXES_APPLIED.md
 SHAREPOINT_404_FIX.md
