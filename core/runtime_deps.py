@@ -77,18 +77,24 @@ class BinarySpec:
 
 # Only these exact archives may be fetched. Adding an entry is a deliberate act:
 # the URL and the digest have to be filled in together.
+#
+# The digests below were computed by downloading each archive over HTTPS from the
+# release URL recorded here; the sizes matched what the GitHub API reports for
+# those assets. Neither project publishes a checksum file, so TLS to github.com
+# is the only trust anchor at first fetch. What pinning buys is everything after
+# that: a substituted or tampered archive under the same URL is refused.
 BINARY_MANIFEST: dict[str, BinarySpec] = {
     "aria2c": BinarySpec(
         name="aria2c",
         url="https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip",
-        sha256="",
+        sha256="67d015301eef0b612191212d564c5bb0a14b5b9c4796b76454276a4d28d9b288",
         member_suffix="aria2c.exe",
         executable_name="aria2c.exe",
     ),
     "N_m3u8DL-RE": BinarySpec(
         name="N_m3u8DL-RE",
-        url="https://github.com/nilaoda/N_m3u8DL-RE/releases/download/v0.3.0-beta/N_m3u8DL-RE_v0.3.0-beta_win-x64_20241203.zip",
-        sha256="",
+        url="https://github.com/nilaoda/N_m3u8DL-RE/releases/download/v0.6.0-beta/N_m3u8DL-RE_v0.6.0-beta_win-x64_20260629.zip",
+        sha256="3825fd42ee502f98a9378f6fdddb2f7822709f521806214f466db6935c950f1a",
         member_suffix="N_m3u8DL-RE.exe",
         executable_name="N_m3u8DL-RE.exe",
     ),

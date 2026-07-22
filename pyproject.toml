@@ -21,4 +21,4 @@ plugins = [
 video-downloader = "run:main"
 
 [tool.setuptools]
-packages = ["core", "utils", "web_ui", "ui"]
+packages = ["core", "utils", "web_ui"]
